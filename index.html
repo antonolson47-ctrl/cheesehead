@@ -100,17 +100,13 @@ body.touch #tc{display:block}
 @keyframes chugPulse{from{transform:scale(1)}to{transform:scale(1.06)}}
 #tcChug.down{transform:scale(.92);animation:none}
 .tcBait{display:flex;flex-direction:column;gap:6px;position:absolute;pointer-events:none}
-.tcBait .tb{position:relative;border-radius:12px;width:calc(var(--u)*1.55);min-height:48px;height:calc(var(--u)*.7);flex-direction:row;gap:4px;font-size:max(12px,calc(var(--u)*.2))}
+.tcBait.grid{flex-direction:row;flex-wrap:wrap}
+.tcBait.grid .ttl{flex:0 0 100%}
+.tcBait .tb{position:relative;border-radius:12px;width:var(--bw,calc(var(--u)*1.55));min-height:48px;height:calc(var(--u)*.7);flex-direction:row;gap:4px;font-size:max(12px,calc(var(--u)*.2))}
+.tcPills .tb.pill{white-space:nowrap}
 .tcBait .ttl{font:bold 12px 'Trebuchet MS','Liberation Sans',Arial,Roboto,sans-serif;color:#ffd84a;text-shadow:1px 1px 0 #000;pointer-events:none}
 #tcTop{position:absolute;display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
 #tcTop .tb{position:relative;border-radius:12px;width:48px;height:48px;font-size:22px}
-#rot{position:fixed;inset:0;z-index:80;background:rgba(8,22,14,.94);display:none;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:24px;box-sizing:border-box;gap:14px}
-#rot.on{display:flex}
-#rot .ph{font-size:72px;animation:rotph 1.6s ease-in-out infinite}
-@keyframes rotph{0%,20%{transform:rotate(0)}60%,100%{transform:rotate(-90deg)}}
-#rot h2{margin:0;color:#ffb612;font-size:24px}#rot p{margin:0;font-size:16px;max-width:420px}
-#rot button{font:bold 18px 'Trebuchet MS','Liberation Sans',Arial,Roboto,sans-serif;min-height:52px;padding:0 20px;border-radius:12px;border:3px solid #203731;background:#ffb612;color:#203731}
-#rot button.alt{background:#fffbea}
 button,input,select{font-family:'Trebuchet MS','Liberation Sans',Arial,Roboto,Helvetica,sans-serif!important}
 body.touch #hud #mode,body.touch #hud #mapBtn,body.touch #hud #sndBtn,body.touch #hud #muteBtn{display:none}
 body.touch .kh,body.touch .key{display:none}
@@ -154,7 +150,6 @@ body.touch #sndPanel.tpanel .tgl{display:flex}
   <div id="ui"></div>
 </div>
 <div id="tc"></div>
-<div id="rot"><div class="ph">📱</div><h2>Rotate your phone</h2><p id="rotMsg">Cheesehead plays best sideways — like a snowmobile in the ditch.</p><button id="rotFs">⛶ Fullscreen &amp; rotate</button><button id="rotGo" class="alt">Play anyway</button></div>
 <script>
 'use strict';
 /* =====================================================================
@@ -233,9 +228,10 @@ addEventListener('keyup', e => {
   if (scene && scene.keyup) scene.keyup(k);
 });
 addEventListener('blur', () => { for (const k in keys) keys[k] = false; mouse.down = false; });
-function canvasPos(e) { const r = cv.getBoundingClientRect(); return [(e.clientX - r.left) * W / r.width, (e.clientY - r.top) * H / r.height]; }
+function canvasPos(e) { const r = cv.getBoundingClientRect(); return [(e.clientX - r.left) * W / r.width, (e.clientY - r.top) * H / r.height, r]; }
 // Pointer Events unify mouse + touch + pen. Touch: one finger drives the canvas; the others are free for on-screen buttons.
-function pointerTo(e) { const [x, y] = canvasPos(e); mouse.x = x; mouse.y = (e.pointerType !== 'mouse' && scene === Hunt) ? y - AIM_OFF : y; mouse.moved = true; }
+// (the float is at least ~40 CSS px on screen, so it still clears the finger when the game is drawn small, e.g. in portrait)
+function pointerTo(e) { const [x, y, r] = canvasPos(e); mouse.x = x; mouse.y = (e.pointerType !== 'mouse' && scene === Hunt) ? y - Math.max(AIM_OFF, 40 * H / Math.max(1, r.height)) : y; mouse.moved = true; }
 cv.addEventListener('pointermove', e => { if (mouse.pid != null && e.pointerId !== mouse.pid) return; if (mouse.pid == null && e.pointerType !== 'mouse') return; pointerTo(e); });
 cv.addEventListener('pointerdown', e => {
   if (e.pointerType !== 'mouse') { setTouchMode(true); e.preventDefault(); }
@@ -247,7 +243,12 @@ cv.addEventListener('pointerdown', e => {
   mouse.aimOnly = mouse.touch && scene === Hunt && TC.drawHeld; // DRAW button held: this finger only aims
   if (!mouse.aimOnly && scene && scene.mousedown) scene.mousedown(e);
 });
-function pointerEnd(e) { if (mouse.pid == null || e.pointerId !== mouse.pid) return; mouse.pid = null; if (mouse.down) { mouse.down = false; const ao = mouse.aimOnly; mouse.aimOnly = false; if (!ao && scene && scene.mouseup) scene.mouseup(e); } }
+function pointerEnd(e) {
+  if (mouse.pid == null || e.pointerId !== mouse.pid) return; mouse.pid = null;
+  if (mouse.down) { mouse.down = false; const ao = mouse.aimOnly; mouse.aimOnly = false;
+    if (e.type === 'pointercancel' && scene === Hunt) { if (!ao) Hunt.cancelDraw(); return; } // touch cancelled (phone rotated, system gesture): never loose an arrow
+    if (!ao && scene && scene.mouseup) scene.mouseup(e); }
+}
 addEventListener('pointerup', pointerEnd); addEventListener('pointercancel', pointerEnd);
 // buttons never steal focus (so SPACE never re-clicks a button)
 document.addEventListener('mousedown', e => { if (e.target.closest && e.target.closest('button')) { e.preventDefault(); audio(); } });
@@ -3234,38 +3235,72 @@ function tk(s) {
 function tkDom(root) { if (!IS_TOUCH || !root) return; const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT); let n; while ((n = w.nextNode())) { const v = tk(n.nodeValue); if (v !== n.nodeValue) n.nodeValue = v; } }
 new MutationObserver(ms => { if (!IS_TOUCH) return; for (const m of ms) for (const n of m.addedNodes) { if (n.nodeType === 1) tkDom(n); else if (n.nodeType === 3) { const v = tk(n.nodeValue); if (v !== n.nodeValue) n.nodeValue = v; } } }).observe(UI, { childList: true, subtree: true });
 
-/* ---- layout: scale the 960x640 game into the safe area ---- */
+/* ---- layout: scale the 960x640 game into the safe area and lay the touch controls out around it ----
+   Touch devices pick whichever layout gives the bigger game, so it follows the phone as it rotates
+   (orientation is never locked):
+   'side'  (landscape): game centred, on-screen controls live in the left/right gutters beside it
+   'stack' (portrait) : game on top, controls in the free area underneath
+   Controls never sit on top of the game and the game is never cropped.                    */
 const saProbe = document.createElement('div');
 saProbe.style.cssText = 'position:fixed;left:0;top:0;width:0;height:0;visibility:hidden;pointer-events:none;padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)';
 document.body.appendChild(saProbe);
 function safeInsets() { const c = getComputedStyle(saProbe); return { t: parseFloat(c.paddingTop) || 0, r: parseFloat(c.paddingRight) || 0, b: parseFloat(c.paddingBottom) || 0, l: parseFloat(c.paddingLeft) || 0 }; }
-let FIT = { s: 1, portrait: false }, CV_K = 1;
+let FIT = { s: 1, portrait: false, mode: 'desk' }, CV_K = 1, lastOrient = null;
+const SIDE_GUT = u => 2.5 * u + 30;                                       // gutter width the race controls need at unit u
+const STACK_ZONE = u => 60 + Math.max(2.5 * u + 28, 1.3 * u + 142, 250) + 6; // height under the game for the controls
 function fit() {
   const sa = safeInsets(), vw = innerWidth, vh = innerHeight;
   const aw = Math.max(100, vw - sa.l - sa.r), ah = Math.max(100, vh - sa.t - sa.b);
-  const s = Math.min(aw / 960, ah / 640), portrait = IS_TOUCH && vh > vw * 1.1;
-  const cx = sa.l + aw / 2, cy = portrait ? sa.t + 6 + 320 * s : sa.t + ah / 2;
+  let s = Math.min(aw / 960, ah / 640), mode = 'desk', u = clamp(Math.min(vw, vh) * 0.17, 48, 96), G = 0;
+  let cx = sa.l + aw / 2, cy = sa.t + ah / 2;
+  if (IS_TOUCH) {
+    const uSide = clamp(Math.min(vw, vh) * 0.09, 48, 72), uStack = clamp(vw * 0.17, 48, 96);
+    const sSide = Math.min(ah / 640, (aw - 2 * SIDE_GUT(uSide)) / 960);
+    const sStack = Math.min(aw / 960, (ah - STACK_ZONE(uStack)) / 640);
+    // prefer the layout that matches how the device is held unless the other one gives a clearly bigger game
+    if (vh > vw ? sStack * 1.15 >= sSide : sStack > sSide * 1.15) {
+      mode = 'stack'; s = Math.max(0.1, sStack); u = uStack; cy = sa.t + 6 + 320 * s;
+    } else {
+      mode = 'side'; s = Math.max(0.1, sSide); G = (aw - 960 * s) / 2;
+      u = clamp((G - 30) / 2.5, 48, clamp(vh * 0.15, 48, 80));
+    }
+  }
+  const portrait = mode === 'stack';
   wrap.style.left = cx + 'px'; wrap.style.top = cy + 'px';
   wrap.style.transform = `translate(-50%,-50%) scale(${s})`;
   const rs = document.documentElement.style;
   rs.setProperty('--s', s); rs.setProperty('--inv', 1 / s);
-  rs.setProperty('--u', clamp(Math.min(vw, vh) * 0.17, 48, 96).toFixed(1) + 'px');
+  rs.setProperty('--u', u.toFixed(1) + 'px');
   rs.setProperty('--mz', IS_TOUCH ? clamp(0.82 / s, 1, 1.45).toFixed(3) : 1);
+  document.body.classList.toggle('lay-stack', mode === 'stack'); document.body.classList.toggle('lay-side', mode === 'side');
   // HiDPI: give the canvas enough backing pixels for the real screen (crisp text on phones); logical size stays 960x600
   const k = clamp(Math.round(s * (window.devicePixelRatio || 1) * 4) / 4, 1, 2);
   if (cv.width !== Math.round(960 * k)) { cv.width = Math.round(960 * k); cv.height = Math.round(600 * k); }
   ctx.setTransform(k, 0, 0, k, 0, 0); CV_K = k;
-  FIT = { s, portrait, vw, vh, sa, k };
-  // top button cluster: 2x2 in the right margin when it fits, under the game in portrait, else a row in the corner
-  const tt = document.getElementById('tcTop');
-  if (tt) { const margin = vw - sa.r - (cx + 480 * s);
-    if (portrait) { tt.style.cssText = `right:${sa.r + 8}px;top:${Math.round(sa.t + 12 + 640 * s)}px;width:auto`; }
-    else if (margin >= 112) { tt.style.cssText = `right:${sa.r + 8}px;top:${sa.t + 6}px;width:102px`; }
-    else tt.style.cssText = `right:${sa.r + 8}px;top:${sa.t + 4}px;width:auto`; }
-  if (window.TC && TC.built) TC.rotCheck();
+  const game = { l: cx - 480 * s, r: cx + 480 * s, t: cy - 320 * s, b: cy + 320 * s };
+  FIT = { s, portrait, mode, u, G, vw, vh, sa, k, game };
+  // the phone was turned: let go of anything held (iOS cancels touches mid-rotation anyway) and never fire a shot by accident
+  const orient = vw > vh ? 'landscape' : 'portrait';
+  if (lastOrient && orient !== lastOrient) onRotate(orient);
+  lastOrient = orient;
+  if (window.TC && TC.built) TC.layout();
+  if (scrollX || scrollY) scrollTo(0, 0);
 }
-addEventListener('resize', fit); addEventListener('orientationchange', () => setTimeout(fit, 120));
+function onRotate(orient) {
+  if (window.TC && TC.built) TC.releaseAll();
+  if (mouse.pid != null || mouse.down) { mouse.pid = null; mouse.down = false; mouse.aimOnly = false; if (scene === Hunt) Hunt.cancelDraw(); }
+  for (const k in keys) keys[k] = false;
+  document.body.dataset.orient = orient;
+}
+// Rotation: 'resize' covers most browsers; iOS Safari / Android WebView sometimes report the new size late, so re-fit a few times
+let fitT = [];
+function fitSoon() { fit(); fitT.forEach(clearTimeout); fitT = [60, 200, 450, 900].map(ms => setTimeout(fit, ms)); }
+addEventListener('resize', fit); addEventListener('orientationchange', fitSoon);
+if (window.visualViewport) visualViewport.addEventListener('resize', fit);
+try { if (screen.orientation && screen.orientation.addEventListener) screen.orientation.addEventListener('change', fitSoon); } catch (e) { }
+if (window.matchMedia) { const mq = matchMedia('(orientation: portrait)'); if (mq.addEventListener) mq.addEventListener('change', fitSoon); else if (mq.addListener) mq.addListener(fitSoon); }
 document.addEventListener('fullscreenchange', () => setTimeout(fit, 60));
+document.addEventListener('webkitfullscreenchange', () => setTimeout(fit, 60));
 
 /* ---- touch mode on/off ---- */
 function setTouchMode(on) {
@@ -3288,7 +3323,6 @@ window.__appResume = () => { if (AC) try { AC.resume(); } catch (e) { } fit(); }
 // Android back button (APK) / browser fallback: close panels, modals, then step back toward the map
 window.__back = function () {
   const sp = $('#sndPanel'); if (sp.style.display === 'block') { sp.style.display = 'none'; return true; }
-  if (TC.rotOn) { TC.rotDismiss(); return true; }
   if (modalEl) { const b = modalButtons.find(b => b.esc); if (b) b.el.click(); return true; }
   if (!scene || scene === Title) return false;
   if (scene === Hub) { go(Title); return true; }
@@ -3297,19 +3331,19 @@ window.__back = function () {
 };
 function goFullscreen() {
   const d = document.documentElement, rq = d.requestFullscreen || d.webkitRequestFullscreen;
-  const lock = () => { try { const p = screen.orientation && screen.orientation.lock && screen.orientation.lock('landscape'); if (p && p.catch) p.catch(() => { }); } catch (e) { } };
-  if (document.fullscreenElement) { (document.exitFullscreen || document.webkitExitFullscreen).call(document); return; }
-  if (!rq) return; try { const p = rq.call(d, { navigationUI: 'hide' }); if (p && p.then) p.then(lock).catch(() => { }); else lock(); } catch (e) { }
+  // orientation is deliberately NOT locked: the layout follows the phone (portrait or landscape)
+  if (document.fullscreenElement || document.webkitFullscreenElement) { (document.exitFullscreen || document.webkitExitFullscreen).call(document); return; }
+  if (!rq) return; try { const p = rq.call(d, { navigationUI: 'hide' }); if (p && p.then) p.then(() => fitSoon()).catch(() => { }); else fitSoon(); } catch (e) { }
 }
 
 /* ---- on-screen controls ---- */
 var TC = {
   built: false, gas: false, brake: false, nitro: false, reel: false, drawHeld: false, steer: 0, steerPid: null, tiltVal: 0, tiltLive: false, rotOn: false, _rotSkip: {}, groups: {}, state: '',
   steerVal() { if (this.steerPid != null) return this.steer; if (S.tilt && this.tiltLive) return this.tiltVal; return 0; },
-  releaseAll() { this.gas = this.brake = this.nitro = this.reel = false; this.steer = 0; this.steerPid = null; if (this.drawHeld) { this.drawHeld = false; if (scene === Hunt) Hunt.cancelDraw(); } if (this.built) this.root.querySelectorAll('.tb.down').forEach(e => e.classList.remove('down')); if (this.knob) this.knob.style.transform = ''; },
+  releaseAll() { this.gas = this.brake = this.nitro = this.reel = false; this.steer = 0; this.steerPid = null; if (this.drawHeld) { this.drawHeld = false; if (scene === Hunt) Hunt.cancelDraw(); } if (this.built) this.root.querySelectorAll('.tb').forEach(e => { e._pid = null; e.classList.remove('down'); }); if (this.knob) this.knob.style.transform = ''; },
   el(parent, cls, html, css) { const e = document.createElement('div'); e.className = cls; if (html != null) e.innerHTML = html; if (css) e.style.cssText = css; parent.appendChild(e); return e; },
-  hold(e, down, up) {
-    const end = ev => { if (e._pid !== ev.pointerId) return; e._pid = null; e.classList.remove('down'); if (up) up(ev); };
+  hold(e, down, up, cancel) {
+    const end = ev => { if (e._pid !== ev.pointerId) return; e._pid = null; e.classList.remove('down'); const f = ev.type === 'pointerup' ? up : (cancel || up); if (f) f(ev); };
     e.addEventListener('pointerdown', ev => { ev.preventDefault(); ev.stopPropagation(); audio(); if (e._pid != null) return; e._pid = ev.pointerId; try { e.setPointerCapture(ev.pointerId); } catch (er) { } e.classList.add('down'); hit('touch'); down(ev); });
     e.addEventListener('pointerup', end); e.addEventListener('pointercancel', end); e.addEventListener('lostpointercapture', end);
     return e;
@@ -3347,7 +3381,7 @@ var TC = {
     this.bBrake = this.hold(this.el(race, 'tb', '<span class="ic">🛑</span><span class="lb">BRAKE</span>', `right:calc(${SA}right) + 26px + var(--u) * 1.5);bottom:${B('16px')};width:${U(1)};height:${U(1)}`), () => { this.brake = true; }, () => { this.brake = false; });
     this.bNos = this.hold(this.el(race, 'tb', '<span class="ic">🔥</span><span class="lb">NOS</span>', `right:calc(${SA}right) + 14px + var(--u) * .25);bottom:calc(${SA}bottom) + 28px + var(--u) * 1.5);width:${U(1)};height:${U(1)}`), () => { this.nitro = true; }, () => { this.nitro = false; });
     this.bHorn = this.hold(this.el(race, 'tb', '<span class="ic">📯</span><span class="lb">HORN</span>', `right:calc(${SA}right) + 30px + var(--u) * 1.5);bottom:calc(${SA}bottom) + 28px + var(--u));width:${U(.85)};height:${U(.85)}`), () => { if (scene === Race) Race.key('h'); });
-    const pills = this.el(race, '', null, `position:absolute;left:${L('14px')};bottom:calc(${SA}bottom) + 28px + var(--u) * 1.3);display:flex;gap:8px`);
+    const pills = this.pills = this.el(race, 'tcPills', null, `position:absolute;left:${L('14px')};bottom:calc(${SA}bottom) + 28px + var(--u) * 1.3);display:flex;gap:8px`);
     this.bAuto = this.hold(this.el(pills, 'tb pill', '⛽ AUTO-GAS', 'position:relative'), () => { S.autoGas = !S.autoGas; save(); SFX.toggle(S.autoGas); toast(S.autoGas ? 'Auto-gas ON: you just steer (BRAKE to slow down).' : 'Auto-gas OFF: hold GAS.', 1600); this.sync(true); });
     this.bTilt = this.hold(this.el(pills, 'tb pill', '📱 TILT', 'position:relative'), () => this.toggleTilt());
     // ---- CHUG (pit stops) ----
@@ -3364,11 +3398,58 @@ var TC = {
     // ---- HUNT ----
     const hunt = g('hunt');
     this.bDraw = this.hold(this.el(hunt, 'tb', '<span class="ic">🏹</span><span class="lb">HOLD<br>DRAW</span>', `right:${Rt('26px')};bottom:${B('24px')};width:${U(1.6)};height:${U(1.6)}`),
-      () => { this.drawHeld = true; if (scene === Hunt) Hunt.startDraw(); }, () => { this.drawHeld = false; if (scene === Hunt) Hunt.release(); });
+      () => { this.drawHeld = true; if (scene === Hunt) Hunt.startDraw(); }, () => { this.drawHeld = false; if (scene === Hunt) Hunt.release(); },
+      () => { this.drawHeld = false; if (scene === Hunt) Hunt.cancelDraw(); }); // cancelled (rotation / system gesture): no shot
     this.bDraw.id = 'tcDraw';
-    const bait = this.el(hunt, 'tcBait', '<div class="ttl">🧀 Cheese bait</div>', `left:${L('12px')};bottom:${B('12px')}`);
+    const bait = this.baitBox = this.el(hunt, 'tcBait', '<div class="ttl">🧀 Cheese bait</div>', `left:${L('12px')};bottom:${B('12px')}`);
     this.baitBtns = BAITS.map(b => { const e = this.hold(this.el(bait, 'tb', `${b.icon} ${fmt(b.price)}`), () => { if (scene === Hunt) { Hunt.placeBait(b); SFX.click(); } }); e.title = b.name; e.dataset.bait = b.id; return { b, e }; });
-    this.built = true; this.sync(true); fit();
+    this.tt = tt; this.built = true; this.sync(true); fit();
+  },
+  // place every control for the current layout (FIT.mode); all numbers are CSS px in viewport space
+  layout() {
+    const F = FIT, sa = F.sa || { t: 0, r: 0, b: 0, l: 0 }, u = F.u, vw = F.vw, P = (e, o) => {
+      const st = e.style; for (const k of ['left', 'right', 'top', 'bottom', 'width', 'height']) st[k] = o[k] == null ? '' : (typeof o[k] === 'number' ? Math.round(o[k] * 10) / 10 + 'px' : o[k]);
+    };
+    const tt = this.tt, side = F.mode === 'side';
+    if (side) {
+      const G = F.G, cL = w => sa.l + (G - w) / 2, cR = w => sa.r + (G - w) / 2; // centre a w-wide control in the left / right gutter
+      // right gutter: map/sound/mute/fullscreen 2x2 at the top
+      if (G >= 112) P(tt, { right: cR(102), top: sa.t + 6, width: 102 }); else P(tt, { right: sa.r + 8, top: sa.t + 4, width: 'auto' });
+      // race: steering pad + AUTO-GAS/TILT left; GAS/BRAKE/NOS/HORN right
+      const sw = Math.min(2.5 * u, G - 16); P(this.steerEl, { left: cL(sw), bottom: sa.b + 16, width: sw, height: 1.3 * u });
+      P(this.pills, { left: sa.l + 8, bottom: sa.b + 28 + 1.3 * u, width: G - 16 }); this.pills.style.flexDirection = 'column';
+      const ro = cR(2.5 * u + 8);
+      P(this.bGas, { right: ro, bottom: sa.b + 16, width: 1.5 * u, height: 1.5 * u });
+      P(this.bBrake, { right: ro + 1.5 * u + 8, bottom: sa.b + 16, width: u, height: u });
+      P(this.bNos, { right: ro + 0.25 * u, bottom: sa.b + 28 + 1.5 * u, width: u, height: u });
+      P(this.bHorn, { right: ro + 1.5 * u + 8 + 0.075 * u, bottom: sa.b + 28 + u, width: 0.85 * u, height: 0.85 * u });
+      const cw = Math.min(2.1 * u, G - 16); P(this.bChug, { right: cR(cw), bottom: sa.b + 24, width: cw, height: cw });
+      const rw = Math.min(1.75 * u, G - 28); P(this.bReel, { right: cR(rw), bottom: sa.b + 24, width: rw, height: rw });
+      P(this.tens, { right: sa.r + 4, bottom: sa.b + 40 + rw, width: G - 8 });
+      const dw = Math.min(1.6 * u, G - 16); P(this.bDraw, { right: cR(dw), bottom: sa.b + 24, width: dw, height: dw });
+      const bw = Math.min(1.55 * u, G - 16); P(this.baitBox, { left: cL(bw), bottom: sa.b + 12, width: bw });
+      this.baitBox.classList.remove('grid'); this.baitBox.style.setProperty('--bw', bw + 'px');
+    } else {
+      // stack (portrait) and desktop-touch fallback: controls in the bottom corners, under the game
+      const gb = F.game ? F.game.b : 0;
+      if (F.mode === 'stack') P(tt, { right: sa.r + 8, top: Math.round(gb + 6), width: 'auto' });
+      else if (vw - sa.r - (F.game ? F.game.r : vw) >= 112) P(tt, { right: sa.r + 8, top: sa.t + 6, width: 102 });
+      else P(tt, { right: sa.r + 8, top: sa.t + 4, width: 'auto' });
+      P(this.steerEl, { left: sa.l + 14, bottom: sa.b + 16, width: 2.5 * u, height: 1.3 * u });
+      P(this.pills, { left: sa.l + 14, bottom: sa.b + 28 + 1.3 * u }); this.pills.style.flexDirection = F.mode === 'stack' ? 'column' : 'row';
+      P(this.bGas, { right: sa.r + 14, bottom: sa.b + 16, width: 1.5 * u, height: 1.5 * u });
+      P(this.bBrake, { right: sa.r + 26 + 1.5 * u, bottom: sa.b + 16, width: u, height: u });
+      P(this.bNos, { right: sa.r + 14 + 0.25 * u, bottom: sa.b + 28 + 1.5 * u, width: u, height: u });
+      P(this.bHorn, { right: sa.r + 30 + 1.5 * u, bottom: sa.b + 28 + u, width: 0.85 * u, height: 0.85 * u });
+      P(this.bChug, { right: sa.r + 28, bottom: sa.b + 24, width: 2.1 * u, height: 2.1 * u });
+      P(this.bReel, { right: sa.r + 26, bottom: sa.b + 24, width: 1.75 * u, height: 1.75 * u });
+      P(this.tens, { right: sa.r + 20, bottom: sa.b + 40 + 1.75 * u, width: 1.9 * u });
+      P(this.bDraw, { right: sa.r + 26, bottom: sa.b + 24, width: 1.6 * u, height: 1.6 * u });
+      // bait: a 2x2 grid when it fits beside the DRAW button, else a column
+      const bw = 1.55 * u, grid = F.mode === 'stack' && sa.l + 12 + 2 * bw + 6 + 12 <= vw - sa.r - 26 - 1.6 * u;
+      P(this.baitBox, { left: sa.l + 12, bottom: sa.b + 12, width: grid ? 2 * bw + 6 : bw });
+      this.baitBox.classList.toggle('grid', grid); this.baitBox.style.setProperty('--bw', bw + 'px');
+    }
   },
   async toggleTilt() {
     if (S.tilt) { S.tilt = false; save(); this.tiltLive = false; SFX.toggle(false); toast('Tilt steering OFF — use the left pad.', 1500); this.sync(true); return; }
@@ -3388,10 +3469,10 @@ var TC = {
       let s = clamp(v / 4.2, -1, 1); s = Math.abs(s) < 0.08 ? 0 : Math.sign(s) * (Math.abs(s) - 0.08) / 0.92; this.tiltVal = s;
     });
   },
-  rotDismiss() { if (scene) this._rotSkip[scene.title] = true; this.rotCheck(); },
+  // Both orientations are fully playable. In portrait a one-time, non-blocking tip mentions the bigger sideways view.
   rotCheck() {
-    const want = IS_TOUCH && innerHeight > innerWidth && (scene === Race || scene === Hunt) && !this._rotSkip[scene.title];
-    if (want !== this.rotOn) { this.rotOn = want; $('#rot').classList.toggle('on', want); if (want) this.releaseAll(); }
+    if (scene === this._lastScene) return; this._lastScene = scene;
+    if (IS_TOUCH && FIT.portrait && (scene === Race || scene === Hunt) && !this._tipShown) { this._tipShown = true; setTimeout(() => { if (FIT.portrait && (scene === Race || scene === Hunt)) toast('📱 Tip: turn your phone sideways for a bigger view.', 1800); }, 400); }
   },
   sync(force) {
     if (!this.built) return;
@@ -3440,8 +3521,6 @@ function toggleSndPanel(force) {
   const panel = $('#sndPanel'), show = force != null ? force : panel.style.display === 'none';
   audio(); syncMixer(); panel.style.display = show ? 'block' : 'none'; SFX.toggle(show);
 }
-$('#rotGo').onclick = () => { audio(); TC.rotDismiss(); };
-$('#rotFs').onclick = () => { audio(); goFullscreen(); setTimeout(() => { fit(); if (TC.rotOn) $('#rotMsg').textContent = 'Turn your phone sideways (rotation lock off), or tap Play anyway.'; }, 700); };
 
 /* ---- app icon (shared by the PWA manifest, favicon and the Android build) ---- */
 function drawAppIcon(g, n, opt = {}) {
@@ -3473,7 +3552,7 @@ function iconURL(n, opt) { const c = document.createElement('canvas'); c.width =
     add('icon', iconURL(64)); add('apple-touch-icon', iconURL(180, { square: true }));
     // PWA manifest: only meaningful on http(s); a blob: URL keeps it inside this one file. (No service worker: those need a separate same-origin script file.)
     if (/^https?:$/.test(location.protocol)) {
-      const man = { name: 'Cheesehead', short_name: 'Cheesehead', start_url: location.href.split('#')[0], scope: location.href.replace(/[^/]*$/, ''), display: 'fullscreen', orientation: 'landscape', background_color: '#0c1a10', theme_color: '#203731',
+      const man = { name: 'Cheesehead', short_name: 'Cheesehead', start_url: location.href.split('#')[0], scope: location.href.replace(/[^/]*$/, ''), display: 'fullscreen', orientation: 'any', background_color: '#0c1a10', theme_color: '#203731',
         icons: [{ src: iconURL(192), sizes: '192x192', type: 'image/png' }, { src: iconURL(512), sizes: '512x512', type: 'image/png' }, { src: iconURL(512, { square: true, fg: true }), sizes: '512x512', type: 'image/png', purpose: 'maskable' }] };
       add('manifest', URL.createObjectURL(new Blob([JSON.stringify(man)], { type: 'application/manifest+json' })));
     }
